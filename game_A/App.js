@@ -1,0 +1,1235 @@
+import React, { useState, useEffect, useRef } from 'react';
+import './styles.css';
+
+// ==========================================
+// 即時 4-Color 網點運算引擎 (Bayer Matrix Dithering)
+// ==========================================
+const DitheredSprite = ({ id, className = "", scale = 4.0 }) => {
+    const canvasRef = useRef(null);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const img = new Image();
+        img.crossOrigin = "Anonymous";
+        img.src = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-viii/icons/${id}.png`;
+        img.onload = () => {
+            const w = img.width;
+            const h = img.height;
+
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = w;
+            offCanvas.height = h;
+            const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+            offCtx.drawImage(img, 0, 0);
+
+            const imageData = offCtx.getImageData(0, 0, w, h);
+            const data = imageData.data;
+
+            const bayer = [
+                [0, 8, 2, 10],
+                [12, 4, 14, 6],
+                [3, 11, 1, 9],
+                [15, 7, 13, 5]
+            ];
+
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i + 3] < 128) { data[i + 3] = 0; continue; }
+
+                const r = data[i], g = data[i + 1], b = data[i + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+                const px = (i / 4) % w;
+                const py = Math.floor((i / 4) / w);
+                const ditherPattern = (bayer[py % 4][px % 4] / 16.0) - 0.5;
+                const dLum = lum + ditherPattern * 60;
+
+                // GameBoy 綠色素處理
+                let R, G, B, A = 255;
+                if (dLum >= 180) { A = 0; }
+                else if (dLum >= 120) { R = 109; G = 130; B = 102; }
+                else if (dLum >= 60) { R = 58; G = 75; B = 60; }
+                else { R = 17; G = 24; B = 18; }
+
+                if (lum < 40) { R = 17; G = 24; B = 18; A = 255; }
+
+                data[i] = R; data[i + 1] = G; data[i + 2] = B; data[i + 3] = A;
+            }
+            offCtx.putImageData(imageData, 0, 0);
+
+            const targetW = Math.floor(w * scale);
+            const targetH = Math.floor(h * scale);
+            canvas.width = targetW;
+            canvas.height = targetH;
+
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+            ctx.clearRect(0, 0, targetW, targetH);
+            ctx.drawImage(offCanvas, 0, 0, w, h, 0, 0, targetW, targetH);
+        };
+    }, [id, scale]);
+
+    return (
+        <canvas
+            ref={canvasRef}
+            className={`pixel-rendering ${className}`}
+            style={{ maxWidth: 'none', imageRendering: 'pixelated' }}
+        />
+    );
+};
+
+const ICONS = {
+    status: ["  3     ", "  33    ", " 333  3 ", " 3333 33", "33333333", "33333333", "        ", "        "],
+    feed: ["   33   ", "  3333  ", " 333333 ", "33333333", "33333333", " 333333 ", "  3333  ", "   33   "],
+    clean: ["        ", "   33   ", "  3333  ", " 333333 ", "33333333", "33333333", " 333333 ", "        "],
+    pet: ["   33   ", "  3333  ", "  33 33 ", " 33  33 ", " 3   33 ", " 3   3  ", "  3 3   ", "   3    "],
+    train: [" 33  33 ", " 333333 ", "   33   ", " 333333 ", "   33   ", " 333333 ", " 33  33 ", "        "],
+    focus: ["   33   ", "  3333  ", " 333333 ", "   33   ", "  33    ", " 33     ", " 3      ", "        "],
+    mail: ["        ", "33333333", "33    33", "3 3  3 3", "3  33  3", "3      3", "33333333", "        "],
+    info: ["   33   ", "  3333  ", "  3333  ", "   33   ", "        ", "   33   ", "  3333  ", "   33   "],
+    heart: ["  33 33 ", " 3333 33", "33333333", "33333333", " 333333 ", " 333333 ", "  3333  ", "   33   "],
+    ghost: [" 333333 ", "33333333", "333  333", "333  333", "33333333", "33333333", " 3 3 3 3", " 3 3 3 3"],
+    runaway: ["        ", " 3  3   ", "333 333 ", " 3  3   ", "        ", "  3  3  ", "  33 33 ", "   3 3  "]
+};
+
+const COLOR_MAP = {
+    '0': '#ffffff',
+    '1': '#aaaaaa',
+    '2': '#555555',
+    '3': '#000000'
+};
+
+const PixelArt = ({ sprite, className = "", scale = 2 }) => {
+    if (!sprite) return null;
+    const size = sprite.length;
+    return (
+        <div className={`pixel-rendering ${className}`} style={{ width: size * scale, height: size * scale, display: 'inline-block' }}>
+            <svg viewBox={`0 0 ${size} ${size}`} width="100%" height="100%" style={{ display: 'block' }}>
+                {sprite.map((row, y) =>
+                    row.split('').map((char, x) => char !== ' ' && (
+                        <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill={COLOR_MAP[char] || '#000000'} />
+                    ))
+                )}
+            </svg>
+        </div>
+    );
+};
+
+const apiKey = "";
+const modelName = "gemini-2.5-flash-preview-09-2025";
+
+const PHYSICS = {
+    FLOAT_SPEED: 0.36,
+    BOUNCE_DAMPING: 0.98,
+    MAX_VELOCITY: 7.0,
+};
+
+const EVOLUTION_TIME = {
+    1: 30000,   // 30 seconds
+    2: 60000,   // 60 seconds
+    3: 120000,  // 120 seconds
+};
+
+// ==========================================
+// 模組 1：40 題完美平衡對話庫
+// ==========================================
+const RAW_Q_DATA = [
+    ["你比較喜歡哪一種天氣？", "大太陽！熱血地奔跑吧！", "fire", "passionate", "聽著下雨聲，感覺很平靜。", "water", "rational", "躲在安全的洞窟裡最好！", "bug", "stubborn"],
+    ["今天探險想去哪裡玩呢？", "去小溪邊溫柔地踩踩水。", "water", "gentle", "去森林深處尋找大樹！", "grass", "rational", "去挖一個超深的泥巴洞！", "bug", "passionate"],
+    ["惹你生氣了該怎麼辦好？", "陪我坐在草地上發呆吧。", "grass", "gentle", "請我吃超辣的火爆餅乾！", "fire", "passionate", "吐一大堆泡泡不理你了。", "water", "nonsense"],
+    ["肚子好餓喔，晚餐吃啥？", "大火烤得劈啪響的烤肉！", "fire", "passionate", "嚼嚼地上的硬土塊就好！", "bug", "nonsense", "營養均衡的翠綠蔬菜沙拉", "grass", "rational"],
+    ["看到別人哭泣你會怎樣？", "給他暖爐般熱熱的擁抱。", "fire", "gentle", "遞給他一片葉子擦眼淚。", "grass", "gentle", "用硬殼幫他擋住壞事！", "bug", "stubborn"],
+    ["遇到很寬的河該怎麼辦？", "踩著荷葉熱血衝過去！", "grass", "passionate", "死命用火把水全蒸發！", "fire", "stubborn", "冷靜尋找堅固樹幹當橋。", "grass", "rational"],
+    ["突然下大雨沒傘怎麼辦？", "太好了！在雨中跳舞吧！", "water", "passionate", "找一片大荷葉溫柔撐傘。", "grass", "gentle", "鑽進地洞裡死都不出來。", "bug", "stubborn"],
+    ["晚上睡不著時會做什麼？", "看著營火，聽柴火聲音。", "fire", "gentle", "冷靜觀察蟲蟲爬行路線。", "bug", "rational", "在水裡吐泡泡數數看。", "water", "nonsense"],
+    ["想學會哪一種新魔法呢？", "讓枯花綻放的溫柔魔法。", "grass", "gentle", "噴出超帥氣的七彩火球！", "fire", "passionate", "變成甲蟲偷偷聽人講話。", "bug", "nonsense"],
+    ["發現一個鎖住的寶箱！", "用銳利草葉冷靜地割開。", "grass", "rational", "不管啦！用大火燒開它！", "fire", "stubborn", "我要咬著硬殼把它撞開！", "bug", "stubborn"],
+    ["遇到超強的壞人怎麼辦？", "用烈焰跟他硬拼到底！", "fire", "passionate", "縮進硬殼裡，絕對不退！", "bug", "stubborn", "裝死變成一根漂流草。", "water", "nonsense"],
+    ["收到什麼禮物最開心呀？", "裝滿清澈泉水的小瓶子。", "water", "gentle", "仔細記錄植物的百科書。", "grass", "rational", "會噴出火花的搞笑玩具！", "fire", "nonsense"],
+    ["覺得自己最大的優點是？", "像流水一樣包容溫柔。", "water", "gentle", "堅持到底的堅硬外殼！", "bug", "stubborn", "無限生長頑強的雜草！", "grass", "stubborn"],
+    ["在森林裡迷路了怎麼辦？", "爬到高樹冷靜觀察地形。", "grass", "rational", "跟著地上的螞蟻隊伍走！", "bug", "nonsense", "點燃火把溫柔引導別人。", "fire", "gentle"],
+    ["最喜歡的休息動作是？", "躺在軟綿綿草地大放鬆。", "grass", "gentle", "泡在冷水裡面冷靜思考。", "water", "rational", "把自己埋土裡露出一顆頭", "bug", "nonsense"],
+    ["我看起來很累時你會？", "摘新鮮果實幫你補體力。", "grass", "rational", "一直潑你水讓你清醒！", "water", "passionate", "帶你去鬆軟泥土裡躺躺。", "bug", "gentle"],
+    ["如果有一座秘密基地？", "長滿各種奇花異草的花園", "grass", "gentle", "地底深處的堅固蟲巢。", "bug", "stubborn", "一定要有沸騰的溫泉！", "fire", "passionate"],
+    ["被誤會了會怎麼反應呢？", "冷靜分析，把話說清楚。", "water", "rational", "氣到冒火，死也要道歉！", "fire", "stubborn", "拿樹葉遮住臉不想理人。", "grass", "nonsense"],
+    ["看見流星會許什麼願望？", "希望能去深海大探險！", "water", "passionate", "希望能有吃不完的泥巴。", "bug", "nonsense", "希望大家都像大樹般健康", "grass", "gentle"],
+    ["如果明天是世界末日？", "燃燒生命痛快大玩一場！", "fire", "passionate", "死命躲避進最深的水底。", "water", "stubborn", "嚼著硬殼冷靜面對一切。", "bug", "rational"],
+    ["你最喜歡聽哪一種故事？", "熱血沸騰的火山傳說！", "fire", "passionate", "大樹精靈的溫柔童話。", "grass", "gentle", "蟲蟲統治世界的漫畫！", "bug", "nonsense"],
+    ["發現一顆奇怪的蛋？", "用火光溫柔地幫它孵化。", "fire", "gentle", "丟進水裡測試浮力密度。", "water", "rational", "固執地拿落葉把它藏好。", "grass", "stubborn"],
+    ["你覺得什麼味道最棒？", "雨後泥土濕潤的氣味。", "grass", "rational", "深海裡鹹鹹的搞笑味道。", "water", "nonsense", "曬過太陽的暖暖味道。", "fire", "gentle"],
+    ["能變人類一天想做啥？", "死都要去公園挖泥巴洞。", "bug", "stubborn", "衝去參加熱鬧營火晚會！", "fire", "passionate", "溫柔地跟水族館魚聊天。", "water", "gentle"],
+    ["「家」應該是什麼樣子？", "只要有著溫暖的小火爐。", "fire", "gentle", "誰也打不破的堅固硬殼！", "bug", "stubborn", "有很多植物，空氣很好。", "grass", "rational"],
+    ["看到一朵快枯萎的花朵？", "溫柔滴水希望能救活它。", "water", "gentle", "沒救了冷靜做成乾燥花。", "grass", "rational", "用泥土把根部固執包好。", "bug", "stubborn"],
+    ["參加賽跑你的策略是？", "用火焰推進器全力衝刺！", "fire", "passionate", "挖地道直接從終點鑽出！", "bug", "nonsense", "像流水一樣冷靜地前進。", "water", "rational"],
+    ["看到有人掉進水裡了！", "伸出大葉子溫柔接住他。", "grass", "gentle", "急著狂噴火想蒸乾河水！", "fire", "nonsense", "冷靜伸出藤蔓拉他上來。", "grass", "rational"],
+    ["你最喜歡的玩具是什麼？", "碰水就會有聲音的鴨子。", "water", "gentle", "固執地猛挖土的小樹枝。", "grass", "stubborn", "亮晶晶的漂亮甲蟲殼。", "bug", "rational"],
+    ["要是我們吵架了怎麼辦？", "躲進殼裡死都不道歉！", "bug", "stubborn", "大哭噴射水柱求你原諒！", "water", "passionate", "氣到噴火把床給燒了！", "fire", "stubborn"],
+    ["你的偉大夢想是什麼？", "讓世界長滿溫柔的森林。", "grass", "gentle", "成為天空中耀眼的太陽！", "fire", "passionate", "吃遍全世界的奇妙蟲子！", "bug", "nonsense"],
+    ["很高很高的牆擋住去路？", "裝備堅硬頭槌固執撞開！", "bug", "stubborn", "先用火烤軟然後撞過去。", "fire", "passionate", "冷靜尋找牆縫慢慢爬過。", "grass", "rational"],
+    ["什麼最能夠讓你安心？", "冷靜待在厚實的泥土裡。", "bug", "rational", "像火焰般溫暖的摸摸。", "fire", "gentle", "聽著小溪流動的白噪音。", "water", "gentle"],
+    ["遇到一直煩人的討厭鬼？", "朝他吐一大堆噁心蟲絲！", "bug", "nonsense", "噴出熱情火焰給他警告！", "fire", "passionate", "像水流般冷靜地繞開他。", "water", "rational"],
+    ["覺得最舒服的溫度是？", "滿頭大汗的熱血夏天！", "fire", "passionate", "微風輕輕吹過的溫柔涼秋", "grass", "gentle", "泡進冷水裡降溫的感覺。", "water", "rational"],
+    ["發現一顆發光神奇寶石？", "用藤蔓把它綁成漂亮項鍊", "grass", "nonsense", "冷靜觀察它的光線折射。", "water", "rational", "死命地把它藏進紅土裡。", "bug", "stubborn"],
+    ["喜歡湊熱鬧還是安靜？", "大家圍著營火瘋狂跳舞！", "fire", "passionate", "只要有樹葉吃怎樣都行。", "grass", "nonsense", "溫柔地看著湖面發小呆。", "water", "gentle"],
+    ["如果可以飛上天空呢？", "飛向太陽去感受那熱度！", "fire", "passionate", "從天上丟果實砸人搞笑！", "grass", "nonsense", "乘著微風像蟲蟲般滑翔。", "bug", "gentle"],
+    ["看到清澈的小水坑會？", "固執地用火把它全烤乾！", "fire", "stubborn", "熱血跳進去狂踩水花！", "water", "passionate", "冷靜放片葉子觀察漂流。", "grass", "rational"],
+    ["今天的心情感覺好嗎？", "像石頭一樣不想說話。", "bug", "stubborn", "像大樹一樣生機盎然。", "grass", "passionate", "像流水一樣平靜舒服。", "water", "rational"]
+];
+
+const generateSoulQuestions = () => {
+    return RAW_Q_DATA.map(row => ({
+        q: row[0],
+        options: [
+            { label: row[1], affinity: row[2], tag: row[3] },
+            { label: row[4], affinity: row[5], tag: row[6] },
+            { label: row[7], affinity: row[8], tag: row[9] }
+        ]
+    }));
+};
+const SOUL_QUESTIONS = generateSoulQuestions();
+
+// Web Audio API 8-bit 音效產生器
+const playBloop = (type) => {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === 'suspended') ctx.resume();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        if (type === 'success') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(600, ctx.currentTime);
+            osc.frequency.setValueAtTime(900, ctx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.05, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+        } else {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(250, ctx.currentTime);
+            osc.frequency.setValueAtTime(150, ctx.currentTime + 0.2);
+            gain.gain.setValueAtTime(0.05, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.4);
+        }
+    } catch (e) { }
+};
+
+// 每次修改進化邏輯時遞增此版本號，舊存檔會自動清除
+const SAVE_VERSION = 2;
+
+const loadSaveData = () => {
+    try {
+        const str = localStorage.getItem('pixel_monster_save') || sessionStorage.getItem('pixel_monster_save');
+        if (str) {
+            const data = JSON.parse(str);
+
+            // 版本不符 → 自動清除舊存檔，全新開始
+            if (data.saveVersion !== SAVE_VERSION) {
+                try { localStorage.removeItem('pixel_monster_save'); } catch (e) { }
+                try { sessionStorage.removeItem('pixel_monster_save'); } catch (e) { }
+                return null;
+            }
+
+            if (data.lastSaveTime && !data.isDead && data.evolutionStage < 4) {
+                const offlineMs = Date.now() - data.lastSaveTime;
+                const stageThresh = { 1: 30000, 2: 60000, 3: 120000 }[data.evolutionStage] || 120000;
+                const dropPerMs = 100 / stageThresh;
+                const offlineDrop = offlineMs * dropPerMs;
+
+                if (data.hunger !== undefined) data.hunger = Math.max(0, data.hunger - offlineDrop);
+                if (data.mood !== undefined) data.mood = Math.max(0, data.mood - offlineDrop);
+            }
+            return data;
+        }
+    } catch (e) { }
+    return null;
+};
+
+export default function App() {
+    const [initialData] = useState(() => loadSaveData());
+
+    const getInit = (key, defaultVal) => {
+        return (initialData && initialData[key] !== undefined) ? initialData[key] : defaultVal;
+    };
+
+    const [hunger, setHunger] = useState(getInit('hunger', 60));
+    const [mood, setMood] = useState(getInit('mood', 50));
+    const [isSleeping, setIsSleeping] = useState(getInit('isSleeping', false));
+    const [isPooping, setIsPooping] = useState(getInit('isPooping', false));
+    const [evolutionStage, setEvolutionStage] = useState(getInit('evolutionStage', 1));
+    const [evolutionBranch, setEvolutionBranch] = useState(getInit('evolutionBranch', 'A'));
+    const [trainWins, setTrainWins] = useState(getInit('trainWins', 0));
+    const [stageTrainWins, setStageTrainWins] = useState(getInit('stageTrainWins', 0));
+    const [feedCount, setFeedCount] = useState(getInit('feedCount', 0));
+    const [deathBranch, setDeathBranch] = useState(getInit('deathBranch', null));
+    const [lastEvolutionTime, setLastEvolutionTime] = useState(getInit('lastEvolutionTime', Date.now()));
+
+    // 談心系統新增狀態
+    const [bondValue, setBondValue] = useState(getInit('bondValue', 0));             
+    const [talkCount, setTalkCount] = useState(getInit('talkCount', 0));             
+    const [lockedAffinity, setLockedAffinity] = useState(getInit('lockedAffinity', null));
+    const [soulAffinityCounts, setSoulAffinityCounts] = useState(getInit('soulAffinityCounts', { fire: 0, water: 0, grass: 0, bug: 0 })); 
+    const [soulTagCounts, setSoulTagCounts] = useState(getInit('soulTagCounts', { gentle: 0, stubborn: 0, passionate: 0, nonsense: 0, rational: 0 })); 
+
+    const [steps, setSteps] = useState(getInit('steps', 0));
+    const [interactionLogs, setInteractionLogs] = useState(getInit('interactionLogs', []));
+    const [interactionCount, setInteractionCount] = useState(getInit('interactionCount', 0));
+    const [isDead, setIsDead] = useState(getInit('isDead', false));
+    const [finalWords, setFinalWords] = useState(getInit('finalWords', ""));
+
+    const [miniGame, setMiniGame] = useState(null);
+    const miniGameResultFired = useRef(false);
+
+    const [pos, setPos] = useState({ x: 128, y: 128 });
+    const [vel, setVel] = useState({ x: 0.6, y: 0.4 });
+    const [isSpinning, setIsSpinning] = useState(false);
+    const [isEvolving, setIsEvolving] = useState(false);
+    const [activeIndex, setActiveIndex] = useState(-1);
+    const [dialogue, setDialogue] = useState(initialData ? `讀取成功! 階段${initialData.evolutionStage}` : "吼吼吼～");
+    const [marqueeKey, setMarqueeKey] = useState(0);
+
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [btnPressed, setBtnPressed] = useState(null);
+    const idleTimeoutRef = useRef(null);
+
+    // Autosave when essential states change
+    useEffect(() => {
+        try {
+            const saveData = {
+                saveVersion: SAVE_VERSION,
+                hunger, mood, isSleeping, isPooping, evolutionStage, evolutionBranch,
+                trainWins, stageTrainWins, feedCount, steps, interactionLogs, interactionCount, isDead, finalWords, lastEvolutionTime,
+                deathBranch, bondValue, talkCount, lockedAffinity, soulAffinityCounts, soulTagCounts,
+                lastSaveTime: Date.now()
+            };
+            const str = JSON.stringify(saveData);
+            try { localStorage.setItem('pixel_monster_save', str); } catch (e) { }
+            try { sessionStorage.setItem('pixel_monster_save', str); } catch (e) { }
+        } catch (e) { }
+    }, [hunger, mood, isSleeping, isPooping, evolutionStage, evolutionBranch, trainWins, stageTrainWins, feedCount, steps, interactionLogs, interactionCount, isDead, finalWords, lastEvolutionTime, deathBranch, bondValue, talkCount, lockedAffinity, soulAffinityCounts, soulTagCounts]);
+
+    useEffect(() => {
+        // Start initial idle timer to clear the "讀取成功" message
+        idleTimeoutRef.current = setTimeout(() => {
+            setDialogue(prev => {
+                if (prev !== "吼吼吼～") {
+                    setMarqueeKey(k => k + 1);
+                    return "吼吼吼～";
+                }
+                return prev;
+            });
+        }, 10000);
+        return () => clearTimeout(idleTimeoutRef.current);
+    }, []);
+
+    const menuItems = [
+        { id: 'status', sprite: ICONS.status, label: '狀態' },
+        { id: 'feed', sprite: ICONS.feed, label: '餵食' },
+        { id: 'talk', sprite: ICONS.heart, label: '談心' },
+        { id: 'pet', sprite: ICONS.pet, label: '摸摸' },
+        { id: 'train', sprite: ICONS.train, label: '訓練' },
+        { id: 'focus', sprite: ICONS.focus, label: '專注' },
+        { id: 'connect', sprite: ICONS.mail, label: '連線' },
+        { id: 'info', sprite: ICONS.info, label: '回憶' },
+    ];
+
+    useEffect(() => {
+        if (isDead || isEvolving || miniGame) return;
+
+        const engineTimer = setInterval(() => {
+            setPos(prev => {
+                let nextX = prev.x + vel.x * PHYSICS.FLOAT_SPEED;
+                let nextY = prev.y + vel.y * PHYSICS.FLOAT_SPEED;
+
+                let newVelX = vel.x;
+                let newVelY = vel.y;
+
+                const MARGIN_X = 68;
+                const MARGIN_TOP = 44;
+                const MARGIN_BOTTOM = 64;
+
+                if (nextX <= MARGIN_X) {
+                    newVelX = Math.abs(vel.x) * PHYSICS.BOUNCE_DAMPING;
+                    nextX = MARGIN_X;
+                } else if (nextX >= 256 - MARGIN_X) {
+                    newVelX = -Math.abs(vel.x) * PHYSICS.BOUNCE_DAMPING;
+                    nextX = 256 - MARGIN_X;
+                }
+
+                if (nextY <= MARGIN_TOP) {
+                    newVelY = Math.abs(vel.y) * PHYSICS.BOUNCE_DAMPING;
+                    nextY = MARGIN_TOP;
+                } else if (nextY >= MARGIN_BOTTOM) {
+                    newVelY = -Math.abs(vel.y) * PHYSICS.BOUNCE_DAMPING;
+                    nextY = MARGIN_BOTTOM;
+                }
+
+                if (newVelX !== vel.x || newVelY !== vel.y) setVel({ x: newVelX, y: newVelY });
+                return { x: nextX, y: nextY };
+            });
+        }, 16);
+
+        return () => clearInterval(engineTimer);
+    }, [vel, isDead, isEvolving]);
+
+    // 用 Ref 確保可以隨時讀取最新狀態而不觸發 useEffect 重啟
+    const latestStats = useRef({ mood, hunger, stageTrainWins, deathBranch, lockedAffinity, soulAffinityCounts, soulTagCounts, bondValue });
+    useEffect(() => {
+        latestStats.current = { mood, hunger, stageTrainWins, deathBranch, lockedAffinity, soulAffinityCounts, soulTagCounts, bondValue };
+    }, [mood, hunger, stageTrainWins, deathBranch, lockedAffinity, soulAffinityCounts, soulTagCounts, bondValue]);
+
+    useEffect(() => {
+        if (isDead || isEvolving || miniGame || isRunaway) return;
+        const thresh = EVOLUTION_TIME[evolutionStage] || 120000;
+
+        // Total drop phase logic: Ensure it drops 100 units over the entire phase
+        const TARGET_DROP_PER_STAGE = 100;
+        const TICK_MS = 1000;
+        const dropPerTick = TARGET_DROP_PER_STAGE * (TICK_MS / thresh);
+
+        const decayTimer = setInterval(() => {
+            setHunger(h => Math.max(0, h - dropPerTick));
+            setMood(m => Math.max(0, m - dropPerTick));
+        }, TICK_MS);
+
+        return () => clearInterval(decayTimer);
+    }, [isDead, isEvolving, evolutionStage, isRunaway]);
+
+    const updateDialogue = (text, persist = false) => {
+        setDialogue(text);
+        setMarqueeKey(prev => prev + 1);
+
+        if (idleTimeoutRef.current) clearTimeout(idleTimeoutRef.current);
+
+        if (!persist) {
+            idleTimeoutRef.current = setTimeout(() => {
+                setDialogue(prev => {
+                    if (prev !== "吼吼吼～") {
+                        setMarqueeKey(k => k + 1);
+                        return "吼吼吼～";
+                    }
+                    return prev;
+                });
+            }, 10000);
+        }
+    };
+
+    const logEvent = (msg) => {
+        setInteractionCount(c => c + 1);
+        setInteractionLogs(prev => [...prev.slice(-10), { t: new Date().toLocaleTimeString(), m: msg }]);
+    };
+
+    const handleTalkChoice = (idx) => {
+        if (!miniGame || miniGame.status !== 'question') return;
+        
+        const opt = SOUL_QUESTIONS[miniGame.qIdx].options[idx];
+        if (!opt) return;
+
+        const topTag = Object.entries(soulTagCounts).reduce((a, b) => a[1] > b[1] ? a : b, ['none', 0])[0];
+        
+        let pts = (opt.tag === topTag || opt.affinity === lockedAffinity) ? 10 : 5;
+        if (!lockedAffinity && topTag === 'none') { pts = 5; } // base points for early stage
+        
+        setBondValue(b => b + pts); 
+        setTalkCount(t => t + 1); 
+        setSoulTagCounts(s => ({ ...s, [opt.tag]: (s[opt.tag] || 0) + 1 }));
+        if (!lockedAffinity) {
+            setSoulAffinityCounts(s => ({ ...s, [opt.affinity]: (s[opt.affinity] || 0) + 1 }));
+        }
+        
+        setMiniGame(p => ({ ...p, status: 'result', points: pts })); 
+        playSoundEffect('success'); 
+        updateDialogue(`絆 +${pts}！`);
+
+        setTimeout(() => {
+            setMiniGame(null);
+            setVel({ x: (Math.random() - 0.5) * 4, y: -2.0 });
+        }, 1500);
+    };
+
+    const handleMiniGameResult = (success) => {
+        if (miniGameResultFired.current) return;
+        miniGameResultFired.current = true;
+
+        setMiniGame(prev => ({ ...prev, status: 'result', result: success }));
+
+        if (success) {
+            playSoundEffect('success');
+            setTrainWins(t => t + 1);
+            setStageTrainWins(t => t + 1);
+            setMood(m => Math.min(100, m + 15));
+            setVel({ x: 0, y: -10.0 }); // 興奮大跳躍
+            updateDialogue("PERFECT！");
+            logEvent("特訓大成功！");
+        } else {
+            playSoundEffect('fail');
+            setMood(m => Math.max(0, m - 5));
+            updateDialogue("MISS...");
+            logEvent("特訓失敗。");
+        }
+
+        setTimeout(() => {
+            setMiniGame(null);
+            setVel({ x: (Math.random() - 0.5) * 4, y: -2.0 });
+        }, 1500);
+    };
+
+    const playSoundEffect = (type) => playBloop(type);
+
+    const handleA = () => {
+
+        if (isDead) {
+            if (!isGenerating) handleRestart();
+            return;
+        }
+        if (miniGame) {
+            if (miniGame.type === 'talk' && miniGame.status === 'question') handleTalkChoice(0);
+            return;
+        }
+        if (isEvolving) return;
+        const next = (activeIndex + 1) % menuItems.length;
+        setActiveIndex(next);
+        updateDialogue("選擇：" + menuItems[next].label);
+    };
+
+    const handleBDown = () => {
+        if (miniGame && miniGame.type === 'charge' && miniGame.status === 'idle') {
+            setMiniGame(prev => ({ ...prev, status: 'charging', energy: 0 }));
+        }
+    };
+
+    const handleBUp = () => {
+        if (miniGame && miniGame.type === 'charge' && miniGame.status === 'charging') {
+            const success = miniGame.energy >= 70 && miniGame.energy <= 85;
+            handleMiniGameResult(success);
+        }
+    };
+
+    const handleB = () => {
+
+        if (isDead) {
+            if (!isGenerating) handleRestart();
+            return;
+        }
+        if (isEvolving) return;
+
+        if (miniGame) {
+            if (miniGame.status === 'result') return;
+            if (miniGame.type === 'talk' && miniGame.status === 'question') {
+                handleTalkChoice(1);
+                return;
+            }
+
+            if (miniGame.type === 'reaction') {
+                const now = Date.now();
+                const diff = miniGame.targetTime - now;
+                if (Math.abs(diff) <= 1000) {
+                    handleMiniGameResult(true);
+                } else {
+                    handleMiniGameResult(false);
+                }
+            } else if (miniGame.type === 'spin') {
+                if (miniGame.status === 'idle') {
+                    setMiniGame(prev => ({ ...prev, status: 'spinning' }));
+                } else if (miniGame.status === 'spinning') {
+                    const isGood = miniGame.currentIdx % 2 === 0;
+                    handleMiniGameResult(isGood);
+                }
+            }
+            return;
+        }
+
+        if (activeIndex === -1) {
+            setVel(v => ({ x: v.x, y: -4.0 }));
+            updateDialogue("抓到你了！");
+            logEvent("玩家進行了主動摸摸。");
+            return;
+        }
+        executeAction(menuItems[activeIndex].id);
+    };
+
+    const handleC = () => {
+        if (isDead) {
+            if (!isGenerating) handleRestart();
+            return;
+        }
+        if (miniGame) {
+            if (miniGame.type === 'talk' && miniGame.status === 'question') handleTalkChoice(2);
+            return;
+        }
+        setActiveIndex(-1);
+        updateDialogue("吼吼吼～");
+    };
+
+    const executeAction = (id) => {
+        switch (id) {
+            case 'feed':
+                if (hunger >= 100) {
+                    updateDialogue("我吃不下了...");
+                    break;
+                }
+                setHunger(h => Math.min(100, h + 30));
+                setFeedCount(f => f + 1);
+                setVel(v => ({ x: v.x, y: -5.0 }));
+                updateDialogue("真好吃！");
+                logEvent("餵食了怪獸。");
+                break;
+            case 'talk':
+                let qi; 
+                if (lockedAffinity) {
+                    const weightedIndices = SOUL_QUESTIONS.map((q, i) => 
+                        q.options.some(o => o.affinity === lockedAffinity) ? i : -1
+                    ).filter(idx => idx !== -1);
+                
+                    if (Math.random() < 0.7 && weightedIndices.length > 0) {
+                        qi = weightedIndices[Math.floor(Math.random() * weightedIndices.length)];
+                    } else {
+                        qi = Math.floor(Math.random() * SOUL_QUESTIONS.length);
+                    }
+                } else {
+                    qi = Math.floor(Math.random() * SOUL_QUESTIONS.length);
+                }
+                
+                setMiniGame({ type: 'talk', status: 'question', qIdx: qi });
+                updateDialogue("陪伴對談中...", true);
+                logEvent("與怪獸談心。");
+                break;
+            case 'pet':
+                if (mood >= 100) {
+                    updateDialogue("摸太久了...");
+                    break;
+                }
+                setMood(m => Math.min(100, m + 20));
+                setVel(v => ({ x: v.x, y: -4.0 }));
+                updateDialogue("好開心！");
+                logEvent("親密互動。");
+                break;
+            case 'status':
+                updateDialogue(`飽:${Math.floor(hunger)} 心:${Math.floor(mood)}`);
+                break;
+            case 'train':
+                miniGameResultFired.current = false;
+                const roll = Math.random();
+                if (roll < 0.33) {
+                    const targetTime = Date.now() + 4000;
+                    setMiniGame({ type: 'reaction', status: 'ready', targetTime, count: 3, result: null });
+                    updateDialogue("數到0時要按下B鍵唷...", true);
+                } else if (roll < 0.66) {
+                    setMiniGame({ type: 'charge', status: 'idle', energy: 0, result: null });
+                    updateDialogue("按住B鍵直到黃色區域...", true);
+                } else {
+                    const spinItems = ['feed', 'ghost', 'heart', 'ghost', 'focus', 'ghost'];
+                    setMiniGame({ type: 'spin', status: 'idle', items: spinItems, currentIdx: 0, result: null });
+                    updateDialogue("拉霸機啟動，按B鍵考驗運氣...", true);
+                }
+                setPos({ x: 128, y: 190 });
+                setVel({ x: 0, y: 0 });
+                logEvent("開始特訓。");
+                setActiveIndex(-1);
+                break;
+            case 'connect':
+                if (evolutionStage < 4) {
+                    updateDialogue("尚未準備好連線");
+                    return;
+                }
+                if (evolutionStage === 6) {
+                    updateDialogue("連線通道關閉");
+                    return;
+                }
+
+                updateDialogue("連線尋找中...");
+                setIsSpinning(true);
+                setTimeout(() => {
+                    setIsSpinning(false);
+                    const roll = Math.random();
+                    if (evolutionStage === 4) {
+                        if (roll < 0.30) {
+                            setIsEvolving(true);
+                            updateDialogue("資料異常突變！");
+                            setTimeout(() => {
+                                setEvolutionStage(5);
+                                setEvolutionBranch('S');
+                                setIsEvolving(false);
+                                updateDialogue("連線進化成功！");
+                            }, 2500);
+                        } else {
+                            updateDialogue("找不到對手...");
+                        }
+                    } else if (evolutionStage === 5) {
+                        if (roll < 0.05) {
+                            setIsEvolving(true);
+                            updateDialogue("終極神聖連線！");
+                            setTimeout(() => {
+                                setEvolutionStage(6);
+                                setEvolutionBranch('S');
+                                setIsEvolving(false);
+                                updateDialogue("神蹟降臨！");
+                            }, 3500);
+                        } else {
+                            updateDialogue("對接失敗...");
+                        }
+                    }
+                }, 1500);
+                logEvent(`發起連線`);
+                break;
+            default:
+                updateDialogue("開發中");
+        }
+    };
+
+    useEffect(() => {
+        if (isDead || isEvolving || miniGame || isRunaway) return;
+
+        const checkEvolutionInterval = setInterval(() => {
+            const elapsed = Date.now() - lastEvolutionTime;
+
+            // 判斷是否壽終（無法再進化）
+            // Stage 4 是正常的最終形態 (A/B/F)
+            // Stage 3 的 P1, P2, G1, G2, C 則是提前壽終
+            if (evolutionStage >= 4 || (evolutionStage === 3 && ['P1', 'G1', 'G2', 'C', 'F_FAIL1', 'P1_SPECIAL'].includes(evolutionBranch))) {
+                const lifespan = evolutionStage >= 4 ? EVOLUTION_TIME[3] * 2 : EVOLUTION_TIME[2] * 2;
+                if (elapsed >= lifespan) {
+                    clearInterval(checkEvolutionInterval);
+                    // D線抽籤：20% 機率靈魂重生
+                    const dRoll = Math.random();
+                    const dLine = dRoll < 0.20 ? (Math.random() < 0.5 ? 'G1' : 'G2') : null;
+                    setDeathBranch(dLine);
+                    setIsGenerating(true);
+                    setIsDead(true);
+                    setVel({ x: 0, y: -0.1 });
+                    setTimeout(() => {
+                        let words = dLine
+                            ? "靈魂不滅...我還會回來的..."
+                            : (evolutionStage >= 5 ? "我的靈魂永遠與你同在，搭檔。" : "謝謝你陪我走到最後一刻...");
+                        setFinalWords(words);
+                        setIsGenerating(false);
+                    }, 1500);
+                }
+                return;
+            }
+
+            const currentThresh = EVOLUTION_TIME[evolutionStage];
+            if (elapsed >= currentThresh) {
+                clearInterval(checkEvolutionInterval);
+                setIsEvolving(true);
+                updateDialogue("進化中！！");
+
+                const stats = latestStats.current;
+                const m = stats.mood;
+                const h = stats.hunger;
+                const sWins = stats.stageTrainWins;
+                let nextBranch = 'C';
+
+                let soulNext = null;
+                // Stage 1 to 2: Lock affinity
+                if (evolutionStage === 1 && !stats.lockedAffinity) {
+                    let maxAff = 'none', mv = -1;
+                    for (const [k, v] of Object.entries(stats.soulAffinityCounts)) { 
+                        if (v > mv && v > 0) { 
+                            mv = v; 
+                            maxAff = k; 
+                        } 
+                    }
+                    if (maxAff !== 'none') {
+                        setLockedAffinity(maxAff);
+                        stats.lockedAffinity = maxAff;
+                    }
+                }
+
+                // Determine basic soulNext based on locked affinity
+                if (stats.bondValue >= 10 && stats.lockedAffinity) {
+                    if (evolutionStage === 1) {
+                        if (stats.lockedAffinity === 'fire') soulNext = 'F_SOUL'; 
+                        if (stats.lockedAffinity === 'water') soulNext = 'W_SOUL'; 
+                        if (stats.lockedAffinity === 'grass') soulNext = 'GR_SOUL'; 
+                        if (stats.lockedAffinity === 'bug') soulNext = 'B_SOUL'; 
+                    }
+                }
+
+                let requiredWins = 0;
+                if (evolutionStage === 1) requiredWins = 1;
+                else if (evolutionStage === 2) requiredWins = 2;
+                else if (evolutionStage === 3) requiredWins = 4;
+
+                // =====================================================
+                // 進化鏈鎖定規則：
+                if (soulNext || evolutionBranch.endsWith('_SOUL')) {
+                    // 靈魂進化線最高優先
+                    if (soulNext) {
+                        nextBranch = soulNext;
+                    } else {
+                        nextBranch = evolutionBranch; // Stage >= 2 後延續自己的靈魂線
+                    }
+                } else if (['G1', 'G2'].includes(evolutionBranch)) {
+                    // D 線完全封閉，沿原線繼續
+                    nextBranch = evolutionBranch;
+
+                } else if (evolutionBranch === 'F' || evolutionBranch === 'F_FAIL1' || evolutionBranch === 'F_FAIL2') {
+                    // ★ 已在 F 線：鎖定在 F 線內，不可換線
+                    if (evolutionBranch === 'F') {
+                        if (sWins >= requiredWins) {
+                            nextBranch = 'F'; // 達標，繼續正規 F
+                        } else if (evolutionStage === 2) {
+                            nextBranch = 'F_FAIL1'; // Stage2 訓練不足 → 飛腿郎
+                        } else if (evolutionStage === 3) {
+                            nextBranch = 'F_FAIL2'; // Stage3 訓練不足 → 快拳郎
+                        } else {
+                            nextBranch = 'F';
+                        }
+                    } else {
+                        nextBranch = evolutionBranch; // F_FAIL1/F_FAIL2 維持
+                    }
+
+                } else if (evolutionBranch === 'P1' || evolutionBranch === 'P1_SPECIAL') {
+                    // ★ 已在 P1 線：鎖定在 P1 線內
+                    if (evolutionBranch === 'P1' && evolutionStage === 2 && m > 80) {
+                        nextBranch = 'P1_SPECIAL'; // 毒瓦斯 → 三合一磁怪（特殊）
+                    } else {
+                        nextBranch = evolutionBranch; // 其餘維持原線
+                    }
+
+                } else if (evolutionBranch === 'P2' || evolutionBranch === 'P2_SPECIAL') {
+                    // ★ 已在 P2 線：鎖定在 P2 線內
+                    if (evolutionBranch === 'P2' && evolutionStage === 2 && m > 80) {
+                        nextBranch = 'P2_SPECIAL'; // 臭泥 → 可達鴨（特殊）
+                    } else if (evolutionBranch === 'P2' && evolutionStage === 3) {
+                        nextBranch = 'P2_SPECIAL'; // Stage3 臭臭泥也可進入哥達鴨
+                    } else {
+                        nextBranch = evolutionBranch; // 其餘維持原線
+                    }
+
+                } else if (evolutionStage === 1) {
+                    // ★ Stage 0→1（百變怪 Stage）：所有線可互通，依條件首次分支
+                    if (sWins >= requiredWins) {
+                        // F 線優先（訓練達標）
+                        nextBranch = 'F';
+                    } else if (m <= 0 && h <= 0) {
+                        // P 線：心情飢餓同時歸零
+                        nextBranch = Math.random() < 0.5 ? 'P1' : 'P2';
+                    } else if (m >= 50 && h >= 50) {
+                        nextBranch = Math.random() < 0.5 ? 'A' : 'B';
+                    } else if (m >= 50) {
+                        nextBranch = 'A';
+                    } else if (h >= 50) {
+                        nextBranch = 'B';
+                    } else {
+                        nextBranch = 'C';
+                    }
+
+                } else if (['A', 'B', 'C'].includes(evolutionBranch)) {
+                    // ★ 已在 A/B/C 一般線（Stage>=2）：三線互通
+                    if (evolutionStage === 3 && h < 50 && m < 50) {
+                        nextBranch = 'DRAGON'; // Stage 3→4 特殊龍進化
+                    } else if (m >= 50 && h >= 50) {
+                        nextBranch = Math.random() < 0.5 ? 'A' : 'B';
+                    } else if (m >= 50) {
+                        nextBranch = 'A';
+                    } else if (h >= 50) {
+                        nextBranch = 'B';
+                    } else {
+                        nextBranch = 'C';
+                    }
+
+                } else {
+                    // 其他未覆蓋情況（保底）
+                    nextBranch = 'C';
+                }
+
+                setTimeout(() => {
+                    setEvolutionStage(evolutionStage + 1);
+                    setEvolutionBranch(nextBranch);
+                    setLastEvolutionTime(Date.now());
+                    setStageTrainWins(0);
+                    setIsEvolving(false);
+                    updateDialogue("進化成功！");
+                }, 2500);
+            }
+        }, 500);
+
+        return () => clearInterval(checkEvolutionInterval);
+    }, [evolutionStage, isDead, isEvolving, lastEvolutionTime, miniGame, isRunaway]);
+
+    useEffect(() => {
+        if (!miniGame || miniGame.status === 'result') return;
+
+        const interval = setInterval(() => {
+            if (miniGame.type === 'reaction') {
+                const now = Date.now();
+                const diff = miniGame.targetTime - now;
+
+                setMiniGame(prev => {
+                    if (!prev || prev.status === 'result') return prev;
+                    let ns = { ...prev };
+
+                    if (prev.status === 'ready' && diff <= 3000) {
+                        ns.status = 'countdown';
+                        ns.count = 3;
+                    } else if (prev.status === 'countdown') {
+                        const sec = Math.ceil(diff / 1000);
+                        if (sec <= 0) {
+                            ns.status = 'go';
+                            ns.count = 0;
+                        } else {
+                            ns.count = sec;
+                        }
+                    } else if (prev.status === 'go' && diff < -1000) {
+                        handleMiniGameResult(false);
+                        return ns;
+                    }
+                    return ns;
+                });
+            } else if (miniGame.type === 'charge') {
+                setMiniGame(prev => {
+                    if (!prev || prev.status !== 'charging') return prev;
+                    let nextE = prev.energy + 3;
+                    if (nextE >= 100) {
+                        handleMiniGameResult(false);
+                        return { ...prev, energy: 100, status: 'result' };
+                    }
+                    return { ...prev, energy: nextE };
+                });
+                if (miniGame.status === 'charging') {
+                    setPos({ x: 128 + (Math.random() - 0.5) * 4, y: 190 + (Math.random() - 0.5) * 4 });
+                }
+            } else if (miniGame.type === 'spin') {
+                if (miniGame.status === 'spinning') {
+                    setMiniGame(prev => {
+                        if (prev.status !== 'spinning') return prev;
+                        let nextTick = (prev.tick || 0) + 1;
+                        if (nextTick >= 2) {
+                            return { ...prev, currentIdx: (prev.currentIdx + 1) % prev.items.length, tick: 0 };
+                        }
+                        return { ...prev, tick: nextTick };
+                    });
+                }
+            }
+        }, 50);
+
+        return () => clearInterval(interval);
+    }, [miniGame?.status, miniGame?.type, miniGame?.targetTime]);
+
+    const triggerFarewell = () => {
+        // D線抽籤：20% 機率靈魂重生
+        const dRoll = Math.random();
+        const dLine = dRoll < 0.20 ? (Math.random() < 0.5 ? 'G1' : 'G2') : null;
+        setDeathBranch(dLine);
+        setIsGenerating(true);
+        setIsDead(true);
+
+        setTimeout(() => {
+            let words = "";
+            if (dLine) {
+                words = "靈魂不滅...我還會回來的...";
+            } else if (evolutionStage >= 5) {
+                words = "我的靈魂永遠與你同在，搭檔。";
+            } else if (evolutionStage >= 4) {
+                words = "謝謝你陪我走到最後一刻...";
+            } else if (mood < 30) {
+                words = "來生再見了...希望你好好的...";
+            } else if (trainWins > 10) {
+                words = "我的戰鬥已經結束了！沒有遺憾！";
+            } else {
+                words = "這段陪伴的時光很開心！謝謝你！";
+            }
+
+            setFinalWords(words);
+            setIsGenerating(false);
+        }, 1500);
+    };
+
+    const handleRestart = () => {
+        const savedDeathBranch = latestStats.current.deathBranch;
+
+        setHunger(60);
+        setMood(50);
+        setIsSleeping(false);
+        setIsPooping(false);
+        setTrainWins(0);
+        setInteractionLogs([]);
+        setInteractionCount(0);
+        setIsGenerating(false);
+        setIsDead(false);
+        setFinalWords("");
+        setPos({ x: 128, y: 128 });
+        setVel({ x: 0.6, y: 0.4 });
+        setSteps(0);
+        setLastEvolutionTime(Date.now());
+        setStageTrainWins(0);
+        setMiniGame(null);
+        setActiveIndex(-1);
+        setFeedCount(0);
+        setDeathBranch(null); // 重置 D線籤
+
+        // 死亡後不重置 bondValue 與 talkCount 即可繼承
+        const inheritedBond = Math.floor((latestStats.current.bondValue || 0) * 0.2);
+        const prevAffinity = latestStats.current.lockedAffinity;
+        
+        setBondValue(inheritedBond); 
+        setTalkCount(0);
+        setLockedAffinity(null);
+        setSoulAffinityCounts({ 
+            fire: prevAffinity === 'fire' ? 1 : 0, 
+            water: prevAffinity === 'water' ? 1 : 0, 
+            grass: prevAffinity === 'grass' ? 1 : 0, 
+            bug: prevAffinity === 'bug' ? 1 : 0 
+        });
+        setSoulTagCounts({ gentle: 0, stubborn: 0, passionate: 0, nonsense: 0, rational: 0 });
+
+        if (savedDeathBranch) {
+            // D線觸發：靈魂重生為鬼斯/凱西線
+            setEvolutionStage(1);
+            setEvolutionBranch(savedDeathBranch);
+            setDialogue(savedDeathBranch === 'G1' ? "鬼魂附身！" : "神秘力量覺醒！");
+        } else {
+            // 正常重啟：回到百變怪
+            setEvolutionStage(1);
+            setEvolutionBranch('A');
+            setDialogue("吼吼吼～");
+        }
+
+        // 🔥 VERY IMPORTANT: Remove localStorage data immediately!
+        try { localStorage.removeItem('pixel_monster_save'); } catch (e) { }
+        try { sessionStorage.removeItem('pixel_monster_save'); } catch (e) { }
+    };
+
+    const getMonsterId = () => {
+        if (isDead) return 92; // Gastly
+
+        if (evolutionStage === 1) {
+            if (evolutionBranch === 'G1') return 92; // Gastly
+            if (evolutionBranch === 'G2') return 63; // Abra
+            return 132; // Ditto
+        }
+
+        if (evolutionStage === 2) {
+            if (evolutionBranch === 'B_SOUL') return 10; // Caterpie
+            if (evolutionBranch === 'F_SOUL') return 4;  // Charmander
+            if (evolutionBranch === 'W_SOUL') return 7;  // Squirtle
+            if (evolutionBranch === 'GR_SOUL') return 1; // Bulbasaur
+            if (evolutionBranch === 'G1') return 93;  // 鬼斯通
+            if (evolutionBranch === 'G2') return 64;  // 勇吉拉
+            if (evolutionBranch === 'P1') return 109; // 毒瓦斯
+            if (evolutionBranch === 'P2') return 88;  // 臭泥
+            if (evolutionBranch === 'F') return 66;  // 妙力
+            if (evolutionBranch === 'A') return 32;  // 尼多朗
+            if (evolutionBranch === 'B') return 29;  // 尼多蘭
+            return 19; // Rattata (C 線)
+        }
+        if (evolutionStage === 3) {
+            if (evolutionBranch === 'B_SOUL') return 11; // Metapod
+            if (evolutionBranch === 'F_SOUL') return 5;  // Charmeleon
+            if (evolutionBranch === 'W_SOUL') return 8;  // Wartortle
+            if (evolutionBranch === 'GR_SOUL') return 2; // Ivysaur
+            if (evolutionBranch === 'G1') return 94;  // 耿鬼
+            if (evolutionBranch === 'G2') return 65;  // 胡地
+            if (evolutionBranch === 'P1_SPECIAL') return 82; // Magneton
+            if (evolutionBranch === 'P1') return 110; // 雙彈瓦斯
+            if (evolutionBranch === 'P2_SPECIAL') return 54; // Psyduck
+            if (evolutionBranch === 'P2') return 89;  // 臭臭泥
+            if (evolutionBranch === 'F_FAIL1') return 106; // 飛腿郎
+            if (evolutionBranch === 'F') return 67;  // 怪力
+            if (evolutionBranch === 'A') return 33;  // 尼多利諾
+            if (evolutionBranch === 'B') return 30;  // 尼多娜
+            return 20; // Raticate (C 線，Stage 3 壽終)
+        }
+        if (evolutionStage === 4) {
+            if (evolutionBranch === 'B_SOUL') return 12; // Butterfree
+            if (evolutionBranch === 'F_SOUL') return 6;  // Charizard
+            if (evolutionBranch === 'W_SOUL') return 9;  // Blastoise
+            if (evolutionBranch === 'GR_SOUL') return 3; // Venusaur
+            if (evolutionBranch === 'DRAGON') return 137; // Dratini
+            if (evolutionBranch === 'G1') return 94;  // 耿鬼（G 線最終）
+            if (evolutionBranch === 'G2') return 65;  // 胡地（G 線最終）
+            if (evolutionBranch === 'P1_SPECIAL') return 82; // Magneton
+            if (evolutionBranch === 'P1') return 110; // 雙彈瓦斯（P 線最終）
+            if (evolutionBranch === 'P2_SPECIAL') return 55; // Golduck
+            if (evolutionBranch === 'P2') return 89;  // 臭臭泥（P 線最終）
+            if (evolutionBranch === 'F_FAIL2') return 107; // 快拳郎
+            if (evolutionBranch === 'F') return 68;  // 龐力
+            if (evolutionBranch === 'A') return 34;  // 尼多王
+            if (evolutionBranch === 'B') return 31;  // 尼多后
+            return 20; // Raticate（C 線已在 Stage 3 壽終）
+        }
+
+        // Secret Connect Stages
+        if (evolutionStage === 5) return 249; // Lugia
+        if (evolutionStage === 6) return 384; // Rayquaza
+
+        return 132;
+    };
+
+    return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-[#1a1a1a] p-4 select-none">
+
+            <div className="relative w-80 h-[500px] bg-gradient-to-br from-[#c8c8c8] to-[#6d6d6d] rounded-t-[50px] rounded-b-[70px] border-b-[16px] border-r-[12px] border-[#5a5a5a] shadow-[15px_15px_50px_rgba(0,0,0,0.8)] p-6 flex flex-col items-center">
+
+                <div className="text-[12px] text-[#4d4d4d] font-bold tracking-[8px] mt-2 mb-4 drop-shadow-sm ml-2">數位怪獸</div>
+
+                <div className="lcd-container">
+
+                    <div className="lcd-grid-overlay"></div>
+
+                    <div className="logical-canvas flex flex-col items-center justify-between pointer-events-none p-2">
+
+                        <div className="w-full h-[24px] flex justify-between px-4 pt-2 z-20 shrink-0">
+                            {menuItems.slice(0, 4).map((item, idx) => (
+                                <div key={item.id} className="pixel-rendering" style={{ opacity: activeIndex === idx ? 1 : 0.2 }}>
+                                    <PixelArt sprite={item.sprite} color="#1a1a1a" scale={2} />
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="w-full flex-1 relative z-10 overflow-hidden">
+                            {isEvolving && (
+                                <div className="absolute inset-0 bg-[#8fa07e]/80 flex items-center justify-center z-30">
+                                    <span className="animate-pulse text-[14px] tracking-widest font-bold">進化中...</span>
+                                </div>
+                            )}
+
+                            {miniGame && (
+                                <div className="absolute inset-0 z-20 flex flex-col items-center justify-start pt-8 pointer-events-none">
+                                    {miniGame.type === 'reaction' && (
+                                        <>
+                                            {miniGame.status === 'ready' && <span className="text-[20px] font-bold animate-pulse text-[#111]">READY?</span>}
+                                            {miniGame.status === 'countdown' && <span className="text-[48px] font-black text-[#111]">{miniGame.count}</span>}
+                                            {miniGame.status === 'go' && <span className="text-[36px] font-black text-[#ff5252] animate-bounce" style={{ textShadow: '2px 2px 0 #fff' }}>GO!</span>}
+                                        </>
+                                    )}
+                                    {miniGame.type === 'charge' && (
+                                        <>
+                                            {miniGame.status === 'idle' && <span className="text-[20px] font-bold animate-pulse text-[#111]">HOLD B!</span>}
+                                            {miniGame.status === 'charging' && (
+                                                <div className="w-[160px] h-[24px] border-4 border-[#111] bg-[#8fa07e] relative shadow-[0_4px_0_rgba(0,0,0,0.2)] mt-4">
+                                                    <div className="absolute top-0 bottom-0 left-[70%] w-[15%] bg-[#ffca28]/60" />
+                                                    <div className="h-full bg-[#ff5252] transition-all duration-75" style={{ width: `${miniGame.energy}%` }} />
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                    {miniGame.type === 'spin' && (
+                                        <>
+                                            {miniGame.status === 'idle' && <span className="text-[20px] font-bold animate-pulse text-[#111] mb-2">START? [B]</span>}
+                                            {miniGame.status === 'spinning' && <span className="text-[20px] font-bold animate-pulse text-[#ff5252] mb-2">STOP! [B]</span>}
+
+                                            {(miniGame.status === 'idle' || miniGame.status === 'spinning') && (
+                                                <div className="w-[48px] h-[48px] border-4 border-[#111] bg-[#e0e0e0] flex items-center justify-center relative shadow-[0_4px_0_rgba(0,0,0,0.2)]">
+                                                    <PixelArt sprite={ICONS[miniGame.items[miniGame.currentIdx]]} color="#111" scale={3} />
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                    {miniGame.type === 'talk' && miniGame.status === 'question' && (
+                                        <div className="absolute inset-x-2 top-2 bottom-2 bg-[#9baea0] border-[4px] border-[#383a37] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-2 flex flex-col pointer-events-auto z-40">
+                                            <div className="text-[13px] font-extrabold text-[#111] mb-2 leading-tight whitespace-normal break-words h-[40px] flex items-center shrink-0">
+                                                {SOUL_QUESTIONS[miniGame.qIdx].q}
+                                            </div>
+                                            <div className="flex flex-col gap-1 w-full bg-[#839788] px-2 py-1.5 border-[2px] border-[#5e6d62] flex-1 justify-around">
+                                                {SOUL_QUESTIONS[miniGame.qIdx].options.map((opt, i) => (
+                                                    <div key={i} className="text-[11px] whitespace-normal leading-[1.2] text-[#111] font-bold tracking-tight flex items-start">
+                                                        <span className="text-[#333] font-black mr-1 shrink-0">{['A', 'B', 'C'][i]}.</span>
+                                                        <span>{opt.label}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {miniGame.status === 'result' && (
+                                        <span className={`text-[24px] font-black ${(miniGame.points || miniGame.result) ? 'text-[#ffca28]' : 'text-[#444]'}`} style={{ textShadow: '2px 2px 0 #fff' }}>
+                                            {miniGame.points ? `+${miniGame.points}` : (miniGame.result ? "PERFECT!" : "MISS")}
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+
+                            {!isDead ? (
+
+                                <div
+                                    className="absolute transition-transform duration-150 ease-linear"
+                                    style={{
+                                        left: pos.x, top: pos.y,
+                                        transform: `translate(-50%, -50%) ${isSpinning ? 'rotate(180deg)' : 'rotate(0deg)'}`
+                                    }}
+                                >
+                                    <DitheredSprite id={getMonsterId()} />
+                                </div>
+                            ) : isDead ? (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center animate-pulse gap-2">
+                                    <DitheredSprite id={getMonsterId()} />
+                                    {finalWords && (
+                                        <div className="text-[12px] text-center font-bold px-2 max-w-[200px] break-words">
+                                            {finalWords}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : null}
+                        </div>
+
+                        <div className="w-[240px] h-[32px] border-2 border-[#1a1a1a] flex items-center px-2 overflow-hidden z-20 bg-[#9dae8a] shrink-0 mb-3 shadow-[inset_2px_2px_0_rgba(0,0,0,0.2)]">
+                            <span key={marqueeKey} className="text-[12px] font-bold whitespace-nowrap" style={{ animation: 'marquee-once 4s ease-out forwards' }}>
+                                {dialogue}
+                            </span>
+                        </div>
+
+                        <div className="w-full h-[24px] flex justify-between px-4 pb-2 z-20 shrink-0">
+                            {menuItems.slice(4, 8).map((item, idx) => (
+                                <div key={item.id} className="pixel-rendering" style={{ opacity: activeIndex === idx + 4 ? 1 : 0.2 }}>
+                                    <PixelArt sprite={item.sprite} color="#1a1a1a" scale={2} />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-8 w-full flex justify-between px-4 mb-2">
+                    {[
+                        { key: 'A', name: '選' },
+                        { key: 'B', name: '定' },
+                        { key: 'C', name: '返' }
+                    ].map((btn) => (
+                        <div key={btn.key} className="flex flex-col items-center gap-1">
+                            <button
+                                onMouseDown={() => { setBtnPressed(btn.key); if (btn.key === 'B') handleBDown(); }}
+                                onMouseUp={() => { setBtnPressed(null); if (btn.key === 'B') handleBUp(); }}
+                                onMouseLeave={() => { setBtnPressed(null); if (btn.key === 'B') handleBUp(); }}
+                                className={`
+                  w-[46px] h-[46px] rounded-full shadow-[0_4px_6px_rgba(0,0,0,0.6)]
+                  transition-all active:translate-y-[2px] active:shadow-sm
+                  border-[3px] border-[#383a37] 
+                  ${btn.key === 'A' ? 'bg-[#ffca28]' : btn.key === 'B' ? 'bg-[#ff5252]' : 'bg-[#00c853]'}
+                  ${btnPressed === btn.key ? 'brightness-75' : 'brightness-100'}
+                  flex items-center justify-center text-[#212121] text-[18px] font-black
+                `}
+                                onClick={() => btn.key === 'A' ? handleA() : btn.key === 'B' ? handleB() : handleC()}
+                            > {btn.key} </button>
+                            <span className="text-[12px] font-bold text-[#424242] tracking-widest mt-1">
+                                {btn.name}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mt-6 flex flex-col gap-2 w-80">
+                <button
+                    onClick={isDead ? restart : triggerFarewell}
+                    disabled={!isDead && isGenerating}
+                    className="w-full bg-[#3d3d3d] text-[#ff5252] py-3 rounded text-[12px] font-bold tracking-widest disabled:opacity-50"
+                >
+                    {isDead ? "重置系統" : (isGenerating ? "連結AI中..." : "終止生命")}
+                </button>
+            </div>
+
+            <style>{`
+        @keyframes marquee-once {
+          0% { transform: translateX(100%); opacity: 0; }
+          15% { opacity: 1; }
+          100% { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
+        </div>
+    );
+}

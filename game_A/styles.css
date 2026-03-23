@@ -1,0 +1,182 @@
+/* 匯入 Pixel Art 風格的 Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  /* 背景用深色凸顯中間的遊戲機畫面 */
+  background-color: #2c251e; 
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  /* 像素字體應用 */
+  font-family: 'Press Start 2P', cursive;
+}
+
+/* === 階段一： 響應式(RWD) 遊戲機本體 === */
+.game-container {
+  width: 100%;
+  max-width: 400px; /* 手機畫面寬度限制 */
+  background-color: #f5ecd8; /* 暖色調：米色背景 */
+  border: 8px solid #4a3728; /* 深棕色線條邊框 */
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  color: #4a3728;
+  /* 平衡高度適應手機直拍 */
+  height: 100vh;
+  max-height: 850px;
+}
+
+/* 頂部狀態列 */
+.status-board {
+  text-align: center;
+  border-bottom: 4px dashed #4a3728;
+  padding-bottom: 12px;
+}
+
+.monster-name {
+  font-size: 16px;
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+.status-icons {
+  font-size: 10px;
+  min-height: 16px;
+}
+
+.warning {
+  color: #c94a38; /* 警告紅 */
+}
+
+/* === 階段一： 200x200 中央活動區 === */
+.monster-arena {
+  width: 200px;
+  height: 200px;
+  margin: 0 auto;
+  border: 4px solid #4a3728;
+  background-color: #e3d5b8; /* 略深的米色區塊 */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  /* 內側陰影增加復古螢幕感 */
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+}
+
+/* 像素小怪的外觀 */
+.monster-sprite {
+  font-size: 32px;
+  font-weight: bold;
+  color: #4a3728;
+  /* 增加像素顆粒立體感 */
+  text-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+}
+
+/* 狀態數值區塊 */
+.stats-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.stat-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10px;
+}
+
+.stat-bar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 80px;
+}
+
+.bar-bg {
+  flex: 1;
+  height: 16px;
+  background-color: #d1c2a3; /* 空的進度條底色 */
+  border: 2px solid #4a3728;
+  position: relative;
+}
+
+.bar-fill {
+  height: 100%;
+  background-color: #a4c938; /* 飢餓：綠色 */
+  transition: width 0.3s ease; /* 平滑過渡效果 */
+}
+
+.bar-fill.mood {
+  background-color: #38a4c9; /* 心情：藍色 */
+}
+
+.bar-fill.intimacy {
+  background-color: #c938a4; /* 親密：粉紅 */
+}
+
+/* 下方動作按鈕：使用 Grid 系統實現 RWD 等比例排列 */
+.actions-panel {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* 2x2 矩陣 */
+  gap: 12px;
+  margin-top: auto;
+}
+
+.action-btn {
+  background-color: #4a3728;
+  color: #f5ecd8;
+  border: 4px solid #2c251e;
+  border-radius: 6px;
+  padding: 14px 10px;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.1s, filter 0.2s;
+}
+
+/* 點擊反饋 */
+.action-btn:active {
+  transform: scale(0.95);
+  background-color: #5d4837;
+}
+
+.action-btn:disabled {
+  filter: grayscale(1);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* 存檔按鈕 */
+.save-btn {
+  background-color: #2c251e;
+  color: #a4c938;
+  border: 2px dashed #a4c938;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 10px;
+  cursor: pointer;
+  margin-top: 10px;
+  text-align: center;
+}
+
+.save-btn:active {
+  background-color: #3b332b;
+}

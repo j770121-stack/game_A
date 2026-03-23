@@ -368,6 +368,7 @@ const App = () => {
 
     const [isGenerating, setIsGenerating] = useState(false);
     const [btnPressed, setBtnPressed] = useState(null);
+    const [isRunaway, setIsRunaway] = useState(getInit('isRunaway', false));
     const idleTimeoutRef = useRef(null);
 
     // Autosave when essential states change
@@ -377,14 +378,14 @@ const App = () => {
                 saveVersion: SAVE_VERSION,
                 hunger, mood, isSleeping, isPooping, evolutionStage, evolutionBranch,
                 trainWins, stageTrainWins, feedCount, steps, interactionLogs, interactionCount, isDead, finalWords, lastEvolutionTime,
-                deathBranch, bondValue, talkCount, lockedAffinity, soulAffinityCounts, soulTagCounts,
+                deathBranch, bondValue, talkCount, lockedAffinity, soulAffinityCounts, soulTagCounts, isRunaway,
                 lastSaveTime: Date.now()
             };
             const str = JSON.stringify(saveData);
             try { localStorage.setItem('pixel_monster_save', str); } catch (e) { }
             try { sessionStorage.setItem('pixel_monster_save', str); } catch (e) { }
         } catch (e) { }
-    }, [hunger, mood, isSleeping, isPooping, evolutionStage, evolutionBranch, trainWins, stageTrainWins, feedCount, steps, interactionLogs, interactionCount, isDead, finalWords, lastEvolutionTime, deathBranch, bondValue, talkCount, lockedAffinity, soulAffinityCounts, soulTagCounts]);
+    }, [hunger, mood, isSleeping, isPooping, evolutionStage, evolutionBranch, trainWins, stageTrainWins, feedCount, steps, interactionLogs, interactionCount, isDead, finalWords, lastEvolutionTime, deathBranch, bondValue, talkCount, lockedAffinity, soulAffinityCounts, soulTagCounts, isRunaway]);
 
     useEffect(() => {
         // Start initial idle timer to clear the "讀取成功" message
@@ -567,7 +568,7 @@ const App = () => {
         if (isEvolving) return;
         const next = (activeIndex + 1) % menuItems.length;
         setActiveIndex(next);
-        updateDialogue("選擇：" + menuItems[next].label);
+        updateDialogue(menuItems[next].label);
     };
 
     const handleBDown = () => {
@@ -633,6 +634,10 @@ const App = () => {
         }
         if (miniGame) {
             if (miniGame.type === 'talk' && miniGame.status === 'question') handleTalkChoice(2);
+            else if (miniGame.type === 'status' && miniGame.status === 'show') {
+                setMiniGame(null);
+                setVel({ x: (Math.random() - 0.5) * 4, y: -2.0 });
+            }
             return;
         }
         setActiveIndex(-1);
@@ -683,7 +688,8 @@ const App = () => {
                 logEvent("親密互動。");
                 break;
             case 'status':
-                updateDialogue(`飽:${Math.floor(hunger)} 心:${Math.floor(mood)}`);
+                setMiniGame({ type: 'status', status: 'show' });
+                updateDialogue("查看狀態中...", true);
                 break;
             case 'train':
                 miniGameResultFired.current = false;
@@ -815,7 +821,7 @@ const App = () => {
                 }
 
                 // Determine basic soulNext based on locked affinity
-                if (stats.bondValue >= 10 && stats.lockedAffinity) {
+                if (stats.bondValue >= 10 && stats.lockedAffinity && !['G1', 'G2'].includes(evolutionBranch)) {
                     if (evolutionStage === 1) {
                         if (stats.lockedAffinity === 'fire') soulNext = 'F_SOUL'; 
                         if (stats.lockedAffinity === 'water') soulNext = 'W_SOUL'; 
@@ -916,6 +922,12 @@ const App = () => {
                 setTimeout(() => {
                     setEvolutionStage(evolutionStage + 1);
                     setEvolutionBranch(nextBranch);
+                    
+                    // 一般線固定屬性為"無"，只保留個性變化
+                    if (!nextBranch.endsWith('_SOUL')) {
+                        setLockedAffinity(null);
+                    }
+                    
                     setLastEvolutionTime(Date.now());
                     setStageTrainWins(0);
                     setIsEvolving(false);
@@ -1198,16 +1210,47 @@ const App = () => {
                                     )}
                                     {miniGame.type === 'talk' && miniGame.status === 'question' && (
                                         <div className="absolute inset-x-2 top-2 bottom-2 bg-[#9baea0] border-[4px] border-[#383a37] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-2 flex flex-col pointer-events-auto z-40">
-                                            <div className="text-[13px] font-extrabold text-[#111] mb-2 leading-tight whitespace-normal break-words h-[40px] flex items-center shrink-0">
+                                            <div className="text-[14px] font-extrabold text-[#111] mb-2 leading-tight whitespace-nowrap overflow-hidden flex items-center shrink-0">
                                                 {SOUL_QUESTIONS[miniGame.qIdx].q}
                                             </div>
-                                            <div className="flex flex-col gap-1 w-full bg-[#839788] px-2 py-1.5 border-[2px] border-[#5e6d62] flex-1 justify-around">
+                                            <div className="flex flex-col gap-2 w-full bg-[#839788] px-2 py-2 flex-1 justify-center">
                                                 {SOUL_QUESTIONS[miniGame.qIdx].options.map((opt, i) => (
-                                                    <div key={i} className="text-[11px] whitespace-normal leading-[1.2] text-[#111] font-bold tracking-tight flex items-start">
+                                                    <div key={i} className="text-[12px] whitespace-nowrap leading-[1.3] text-[#111] font-bold tracking-tight flex items-start overflow-hidden">
                                                         <span className="text-[#333] font-black mr-1 shrink-0">{['A', 'B', 'C'][i]}.</span>
                                                         <span>{opt.label}</span>
                                                     </div>
                                                 ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {miniGame.type === 'status' && miniGame.status === 'show' && (
+                                        <div className="absolute inset-x-2 top-2 bottom-2 bg-[#9baea0] border-[4px] border-[#383a37] shadow-[4px_4px_0_rgba(0,0,0,0.2)] p-2 flex flex-col pointer-events-auto z-40">
+                                            <div className="flex flex-col gap-2 w-full bg-[#839788] px-3 py-3 flex-1 justify-center">
+                                                <div className="text-[11px] whitespace-nowrap leading-[1.4] text-[#111] font-bold tracking-tight">
+                                                    飽足 : {Math.floor(hunger)}
+                                                </div>
+                                                <div className="text-[11px] whitespace-nowrap leading-[1.4] text-[#111] font-bold tracking-tight">
+                                                    心情 : {Math.floor(mood)}
+                                                </div>
+                                                <div className="text-[11px] whitespace-nowrap leading-[1.4] text-[#111] font-bold tracking-tight">
+                                                    屬性 : {(() => {
+                                                        // 一般線固定顯示"無"
+                                                        if (!evolutionBranch || !evolutionBranch.endsWith('_SOUL')) {
+                                                            return '無';
+                                                        }
+                                                        // 靈魂線顯示對應屬性
+                                                        if (!lockedAffinity) return '未確定';
+                                                        const affinityMap = { fire: '火', water: '水', grass: '草', bug: '蟲' };
+                                                        return affinityMap[lockedAffinity] || lockedAffinity;
+                                                    })()}
+                                                </div>
+                                                <div className="text-[11px] whitespace-nowrap leading-[1.4] text-[#111] font-bold tracking-tight">
+                                                    個性 : {(() => {
+                                                        const tagMap = { gentle: '溫柔', stubborn: '固執', passionate: '熱情', nonsense: '無俚頭', rational: '理性' };
+                                                        const topTag = Object.entries(soulTagCounts).reduce((a, b) => a[1] > b[1] ? a : b, ['無', 0])[0];
+                                                        return tagMap[topTag] || topTag;
+                                                    })()}
+                                                </div>
                                             </div>
                                         </div>
                                     )}
